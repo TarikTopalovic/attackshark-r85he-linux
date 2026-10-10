@@ -92,6 +92,10 @@ if [ ! -f app/dist/index.html ]; then
 fi
 # Firefox has no WebHID and the UI crashes on navigator.hid at start; it talks to the driver anyway, so stub it.
 grep -q 'navigator.hid||' app/dist/index.html || sed -i 's#<head>#<head><script>navigator.hid||Object.defineProperty(navigator,"hid",{value:Object.assign(new EventTarget(),{getDevices:async()=>[],requestDevice:async()=>[]})})</script>#' app/dist/index.html
+# Live colour picker: Firefox's colour dialog only reports on "Select"; this one changes the keyboard while you drag.
+cp live-color.js app/dist/ && { grep -q 'live-color.js' app/dist/index.html || sed -i 's#<head>#<head><script src="./live-color.js"></script>#' app/dist/index.html; }
+# The app pushes pending changes to the keyboard on a 1 s timer; 150 ms makes colour changes show while you drag.
+sed -i -E 's/;\)\{await ([A-Za-z_$]+)\(1e3\);for\(const\[([a-z]),\{tasks:/;){await \1(150);for(const[\2,{tasks:/' app/dist/js/index.*.js
 
 # 3. The Linux driver that replaces the Windows-only iot_driver.exe (prebuilt in driver/dist; node-hid ships binaries).
 say "Installing the driver"
