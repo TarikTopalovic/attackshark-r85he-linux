@@ -1,0 +1,36 @@
+{
+  "name": "monsgeek-js-driver",
+  "private": true,
+  "license": "MPL-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node dist/server-node.js",
+    "typecheck": "tsc --noEmit",
+    "ci": "bun run build && bun run typecheck",
+    "package:win": "bun run build && mkdir -p release && pkg dist/server-node.js --target node20-win-x64 --output release/monsgeek-ts-driver-win-x64.exe --public --public-packages \"*\"",
+    "conformance": "node scripts/driver-conformance.mjs",
+    "conformance:ts": "bun run build && node scripts/driver-conformance.mjs --target ts",
+    "conformance:iot": "node scripts/driver-conformance.mjs --target iot",
+    "conformance:compare": "node scripts/driver-conformance.mjs --compare iot,ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "node-hid": "^3.3.0",
+    "protobufjs": "^8.0.1",
+    "usb": "^2.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "pkg": "^5.8.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "pkg": {
+    "assets": [
+      "src/driver.proto",
+      "dist/**/*"
+    ]
+  }
+}

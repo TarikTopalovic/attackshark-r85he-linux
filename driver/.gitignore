@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# runtime data / traces / local db
+.db/
+*.log
+
+# local binary artifacts
+.bin/
+*.dylib
+*.so
+*.dll
+
+# macOS
+.DS_Store
+
+# editor
+.idea/
+.vscode/
+
+# local env
+.env.local
+.env.*.local
+
+# temporary debug assets
+web/
