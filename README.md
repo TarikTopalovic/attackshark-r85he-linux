@@ -7,7 +7,7 @@ Attack Shark only ships a Windows app. That app is a web UI that talks to a smal
 | | |
 |---|---|
 | Keyboard | Attack Shark R85HE, USB `3151:5029` (RongYuan ry5088 chip, firmware `ry5088_sg9047_1m_8k`, app device id 3123) |
-| Tested on | CachyOS (Arch), kernel 7.2, Node 26, UI in Chromium (Firefox should work the same but is untested) |
+| Tested on | CachyOS (Arch), kernel 7.2, Node 26, UI in Chromium and Firefox |
 
 ## Install
 
@@ -35,6 +35,7 @@ The driver is based on [tricked-dev/monsgeek-js-driver](https://github.com/trick
 - **Unnumbered feature report.** The vendor interface (interface 2, usage page `0xFFFF`) has no report IDs, so hidraw needs a 65-byte read with the leading report-number byte stripped.
 - **Reply latency.** A reply arrives about 16 ms after the command. Until then, reads return the previous reply. The driver now keeps one handle open and waits for the fresh reply. Reopening the device on every call gave zeros.
 - **gRPC-web text mode.** The browser UI sends `grpc-web-text`, and protobuf-ts picks its decoder from the response `Content-Type`. The upstream driver always answered `+proto`, so the UI reported "IOT not detected".
+- **Firefox.** The UI calls `navigator.hid` as it starts, and Firefox has no WebHID, so the page stayed blank. `install.sh` adds a small stand-in to `app/dist/index.html`; the real USB work goes through the driver anyway.
 - **Model.** PID `0x5029` and device id 3123 are set in `driver/.env`.
 
 Set `MONSGEEK_TRACE=1` to log every RPC and HID exchange to `driver/.db/ts-rpc-trace.log`.
