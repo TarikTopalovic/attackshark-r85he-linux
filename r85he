@@ -1,7 +1,17 @@
-#!/bin/bash
-# Open the Attack Shark R85HE configurator: Linux driver on :3814 + app UI on :38140.
+#!/usr/bin/env bash
+# Open the Attack Shark keyboard configurator: Linux driver on :3814, app UI on :38140.
 cd "$(dirname "$(readlink -f "$0")")"
-ss -ltn | grep -q '127.0.0.1:3814 ' || (cd driver && setsid node dist/server-node.js >/tmp/r85he-driver.log 2>&1 < /dev/null &)
-ss -ltn | grep -q '127.0.0.1:38140 ' || setsid python3 -m http.server 38140 --bind 127.0.0.1 --directory app/dist >/dev/null 2>&1 < /dev/null &
-sleep 1
-xdg-open http://127.0.0.1:38140/ >/dev/null 2>&1
+export PATH="$PWD/.node/bin:$PATH"
+url=http://127.0.0.1:38140/
+up() { (exec 3<>/dev/tcp/127.0.0.1/38140) 2>/dev/null; }
+if ! up; then
+  (trap '' HUP; cd driver && exec node dist/server-node.js >"${TMPDIR:-/tmp}/r85he-driver.log" 2>&1 </dev/null) &
+  for _ in $(seq 50); do up && break; sleep 0.1; done
+  up || { echo "driver did not start, see ${TMPDIR:-/tmp}/r85he-driver.log"; exit 1; }
+fi
+echo "Keyboard settings: $url"
+for b in xdg-open "gio open" kde-open exo-open; do command -v ${b%% *} >/dev/null && $b "$url" >/dev/null 2>&1 && exit 0; done
+for b in ${BROWSER:-} firefox chromium google-chrome brave-browser brave microsoft-edge; do
+  command -v "$b" >/dev/null && { (trap '' HUP; exec "$b" "$url" >/dev/null 2>&1 </dev/null) & exit 0; }
+done
+echo "Open $url in your browser."

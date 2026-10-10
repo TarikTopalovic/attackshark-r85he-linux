@@ -3,11 +3,8 @@ import process from "node:process";
 import { applyChecksum, checksumModeName, padReport } from "../protocol";
 import type { DeviceBridge, DeviceListEntry } from "../types";
 
-const USB_INTERFACE = 2;
-const USB_USAGE_PAGE = 0xffff;
-const USB_USAGE = 0x2;
 const DEFAULT_LOGICAL_PATH = "1";
-const DEFAULT_REPORT_ID = Number.parseInt(process.env.MONSGEEK_REPORT_ID ?? "1", 10);
+const DEFAULT_REPORT_ID = Number.parseInt(process.env.MONSGEEK_REPORT_ID ?? "0", 10);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -15,58 +12,99 @@ function sleep(ms: number): Promise<void> {
 
 export interface NodeUsbBridgeOptions {
   vid: number;
-  pid: number;
-  defaultDeviceId: number;
+  // Skip asking the board (0x8f) and use this app device id.
+  deviceId?: number;
 }
 
 export class NodeUsbBridge implements DeviceBridge {
   private readonly vid: number;
-  private readonly pid: number;
-  private readonly defaultDeviceId: number;
+  private readonly forcedId: number | undefined;
   private readonly logicalPath = DEFAULT_LOGICAL_PATH;
   private readonly lastRead = new Map<string, Uint8Array>();
   private reportId = DEFAULT_REPORT_ID;
   private hidPath: string | null = null;
-  private cached: DeviceListEntry[] = [];
+  private found: { path: string; id: number } | null = null;
+  private identifying = false;
 
   constructor(options: NodeUsbBridgeOptions) {
     this.vid = options.vid;
-    this.pid = options.pid;
-    this.defaultDeviceId = options.defaultDeviceId;
+    this.forcedId = options.deviceId;
   }
 
+  // Any RongYuan-based board (Attack Shark, MonsGeek, Akko, ...): its vendor collections sit on usage page 0xFF00+.
+  // Many models share one USB pid, so the app's device id comes from the board itself (0x8f reply, bytes 1-2).
   enumerate(): DeviceListEntry[] {
-    const hidDev =
-      HID.devices().find(
-        (device) =>
-          device.vendorId === this.vid &&
-          device.productId === this.pid &&
-          device.interface === USB_INTERFACE &&
-          device.usagePage === USB_USAGE_PAGE &&
-          device.usage === USB_USAGE,
-      ) ?? null;
-
-    if (!hidDev) {
-      this.cached = [];
+    const candidates = HID.devices()
+      .filter((d) => d.vendorId === this.vid && (d.usagePage ?? 0) >= 0xff00 && d.path)
+      .sort((x, y) => (y.usagePage ?? 0) - (x.usagePage ?? 0) || (x.usage === 2 ? -1 : y.usage === 2 ? 1 : 0));
+    const dev = candidates.find((d) => d.path === this.found?.path);
+    if (!dev) {
+      this.found = null;
       this.hidPath = null;
+      if (candidates.length) this.identify(candidates.map((d) => d.path!));
       return [];
     }
-
-    this.hidPath = hidDev.path ?? null;
-    const entry: DeviceListEntry = {
-      dev: {
-        devType: 0,
-        is24: false,
-        path: this.logicalPath,
-        id: this.defaultDeviceId,
-        battery: 0,
-        isOnline: true,
-        vid: this.vid,
-        pid: this.pid,
+    this.hidPath = dev.path!;
+    return [
+      {
+        dev: {
+          devType: 0,
+          is24: false,
+          path: this.logicalPath,
+          id: this.found!.id,
+          battery: 0,
+          isOnline: true,
+          vid: this.vid,
+          pid: dev.productId,
+        },
       },
-    };
-    this.cached = [entry];
-    return this.cached;
+    ];
+  }
+
+  private identify(paths: string[]): void {
+    if (this.identifying) return;
+    this.identifying = true;
+    const run = this.queue.then(async () => {
+      for (const path of paths) {
+        const id = this.forcedId || (await this.askId(path).catch(() => 0));
+        if (!id) continue;
+        this.found = { path, id };
+        console.log(`keyboard found: device id ${id} on ${path}`);
+        return;
+      }
+      console.log("keyboard seen but it did not answer the id query (0x8f); set MONSGEEK_DEVICE_ID to its app device id");
+    });
+    this.queue = run.catch(() => {}).finally(() => (this.identifying = false));
+  }
+
+  private async askId(path: string): Promise<number> {
+    const device = new HID.HID(path);
+    try {
+      for (const reportId of [this.reportId, 0, 1]) {
+        try {
+          await device.sendFeatureReport([reportId, ...applyChecksum(Uint8Array.of(0x8f), "Bit7")]);
+        } catch {
+          continue;
+        }
+        for (let attempt = 0; attempt < 75; attempt += 1) {
+          await sleep(4);
+          let data: Buffer;
+          try {
+            data = Buffer.from(await device.getFeatureReport(reportId, reportId === 0 ? 65 : 64));
+          } catch {
+            break;
+          }
+          if (data[1] === 0x8f) data = data.subarray(1);
+          if (data[0] === 0x8f) {
+            this.reportId = reportId;
+            return data[1] | (data[2] << 8);
+          }
+        }
+      }
+      return 0;
+    } finally {
+      device.close();
+    }
   }
 
   private resolveDevicePath(devicePath: string): string | null {
@@ -106,7 +144,7 @@ export class NodeUsbBridge implements DeviceBridge {
 
   private async getFeature(devicePath: string): Promise<Buffer> {
     return this.withHid(devicePath, async (device) => {
-      const candidates = [this.reportId, 1, 2];
+      const candidates = [this.reportId, 0, 1, 2];
       for (let attempt = 0; attempt < 8; attempt += 1) {
         for (const reportId of candidates) {
           try {

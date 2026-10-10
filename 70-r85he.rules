@@ -1,2 +1,0 @@
-# Attack Shark R85HE (3151:5029): let the logged-in user configure it
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", ATTRS{idProduct}=="5029", TAG+="uaccess"
