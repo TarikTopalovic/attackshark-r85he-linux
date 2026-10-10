@@ -31,4 +31,5 @@ export interface DeviceBridge {
   send(devicePath: string, bytes: Uint8Array, checksumType: number | string, raw?: boolean): Promise<void>;
   read(devicePath: string): Promise<Uint8Array>;
   clean(devicePath: string): void;
+  onVendor?(fn: (msg: Buffer) => void): () => void;
 }

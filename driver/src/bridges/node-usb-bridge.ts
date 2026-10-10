@@ -1,4 +1,6 @@
 import HID from "node-hid";
+import fs from "node:fs";
+import nodePath from "node:path";
 import process from "node:process";
 import { applyChecksum, checksumModeName, padReport } from "../protocol";
 import type { DeviceBridge, DeviceListEntry } from "../types";
@@ -9,6 +11,30 @@ const DEFAULT_REPORT_ID = Number.parseInt(process.env.MONSGEEK_REPORT_ID ?? "0",
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// Report ids of the Input reports inside vendor-defined (usage page 0xFF00+) top-level collections.
+function vendorInputReportIds(desc: Buffer): Set<number> {
+  const ids = new Set<number>();
+  let page = 0, id = 0, depth = 0, topPage = 0;
+  for (let i = 0; i < desc.length; ) {
+    const b = desc[i];
+    if (b === 0xfe) { i += 3 + desc[i + 1]; continue; } // long item
+    const size = [0, 1, 2, 4][b & 3];
+    let v = 0;
+    for (let k = 0; k < size; k += 1) v |= desc[i + 1 + k] << (8 * k);
+    const tag = b & 0xfc;
+    i += 1 + size;
+    if (tag === 0x04) page = v >>> 0;
+    else if (tag === 0x84) id = v;
+    else if (tag === 0xa0) { if (depth++ === 0) topPage = page; }
+    else if (tag === 0xc0) depth -= 1;
+    else if (tag === 0x80 && topPage >= 0xff00) ids.add(id);
+  }
+  return ids;
+}
+
+const sysHidraw = (devPath: string) => `/sys/class/hidraw/${nodePath.basename(devPath)}/device`;
+const usbDeviceOf = (devPath: string) => nodePath.dirname(nodePath.dirname(fs.realpathSync(sysHidraw(devPath))));
 
 export interface NodeUsbBridgeOptions {
   vid: number;
@@ -70,11 +96,50 @@ export class NodeUsbBridge implements DeviceBridge {
         if (!id) continue;
         this.found = { path, id };
         console.log(`keyboard found: device id ${id} on ${path}`);
+        this.openVendorInputs(path);
         return;
       }
       console.log("keyboard seen but it did not answer the id query (0x8f); set MONSGEEK_DEVICE_ID to its app device id");
     });
     this.queue = run.catch(() => {}).finally(() => (this.identifying = false));
+  }
+
+  // Live messages (key travel for the Simulation Test, profile/light switches made on the keyboard) arrive as
+  // vendor Input reports on another interface of the same keyboard. Forward only those, never normal key reports.
+  private vendorIn: HID.HID[] = [];
+  private readonly vendorListeners = new Set<(msg: Buffer) => void>();
+
+  onVendor(fn: (msg: Buffer) => void): () => void {
+    this.vendorListeners.add(fn);
+    return () => this.vendorListeners.delete(fn);
+  }
+
+  private openVendorInputs(featurePath: string): void {
+    this.vendorIn.forEach((d) => d.close());
+    this.vendorIn = [];
+    try {
+      const mine = usbDeviceOf(featurePath);
+      const paths = new Set(HID.devices().filter((d) => d.vendorId === this.vid && d.path).map((d) => d.path!));
+      for (const p of paths) {
+        if (usbDeviceOf(p) !== mine) continue;
+        const ids = vendorInputReportIds(fs.readFileSync(`${sysHidraw(p)}/report_descriptor`));
+        if (!ids.size) continue;
+        const dev = new HID.HID(p);
+        dev.on("data", (data: Buffer) => {
+          if (!ids.has(0) && !ids.has(data[0])) return;
+          const msg = ids.has(0) ? Buffer.concat([Buffer.alloc(1), data]) : data; // the app expects byte 0 = report id
+          this.vendorListeners.forEach((fn) => fn(msg));
+        });
+        dev.on("error", () => {
+          dev.close();
+          this.vendorIn = this.vendorIn.filter((d) => d !== dev);
+        });
+        this.vendorIn.push(dev);
+        console.log(`listening for keyboard messages on ${p} (report ${[...ids].join(",")})`);
+      }
+    } catch (error) {
+      console.log(`no live keyboard messages: ${(error as Error).message}`);
+    }
   }
 
   private async askId(path: string): Promise<number> {

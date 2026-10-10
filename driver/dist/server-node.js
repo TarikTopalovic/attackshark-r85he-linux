@@ -1,6 +1,6 @@
 // src/server-node.ts
 import "dotenv/config";
-import fs3 from "fs";
+import fs4 from "fs";
 import http2 from "http";
 import path3 from "path";
 import { fileURLToPath } from "url";
@@ -357,6 +357,15 @@ async function createGrpcWebServer(options) {
     res.on("close", () => {
     });
   }
+  function handleVenderStream(req, res) {
+    const textMode = isGrpcWebText(req.headers["content-type"]);
+    writeHeaders(res, textMode);
+    const off = options.bridge.onVendor?.((msg) => {
+      traceRpc("vender", { head: msg.subarray(0, 8).toString("hex") });
+      if (!res.writableEnded) writeMessage(res, Types.VenderMsg, { msg }, textMode);
+    });
+    res.on("close", () => off?.());
+  }
   function handleSystemInfoStream(req, res) {
     const textMode = isGrpcWebText(req.headers["content-type"]);
     writeHeaders(res, textMode);
@@ -413,7 +422,7 @@ async function createGrpcWebServer(options) {
       return;
     }
     if (pathname === "/driver.DriverGrpc/watchVender") {
-      handleEmptyStream(req, res, Types.VenderMsg, null);
+      handleVenderStream(req, res);
       return;
     }
     if (pathname === "/driver.DriverGrpc/watchSystemInfo") {
@@ -443,12 +452,39 @@ var withTimeout = async (promise, ms, label) => {
 
 // src/bridges/node-usb-bridge.ts
 import HID from "node-hid";
+import fs3 from "fs";
+import nodePath from "path";
 import process2 from "process";
 var DEFAULT_LOGICAL_PATH = "1";
 var DEFAULT_REPORT_ID = Number.parseInt(process2.env.MONSGEEK_REPORT_ID ?? "0", 10);
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+function vendorInputReportIds(desc) {
+  const ids = /* @__PURE__ */ new Set();
+  let page = 0, id = 0, depth = 0, topPage = 0;
+  for (let i = 0; i < desc.length; ) {
+    const b = desc[i];
+    if (b === 254) {
+      i += 3 + desc[i + 1];
+      continue;
+    }
+    const size = [0, 1, 2, 4][b & 3];
+    let v = 0;
+    for (let k = 0; k < size; k += 1) v |= desc[i + 1 + k] << 8 * k;
+    const tag = b & 252;
+    i += 1 + size;
+    if (tag === 4) page = v >>> 0;
+    else if (tag === 132) id = v;
+    else if (tag === 160) {
+      if (depth++ === 0) topPage = page;
+    } else if (tag === 192) depth -= 1;
+    else if (tag === 128 && topPage >= 65280) ids.add(id);
+  }
+  return ids;
+}
+var sysHidraw = (devPath) => `/sys/class/hidraw/${nodePath.basename(devPath)}/device`;
+var usbDeviceOf = (devPath) => nodePath.dirname(nodePath.dirname(fs3.realpathSync(sysHidraw(devPath))));
 var NodeUsbBridge = class {
   vid;
   forcedId;
@@ -498,12 +534,48 @@ var NodeUsbBridge = class {
         if (!id) continue;
         this.found = { path: path4, id };
         console.log(`keyboard found: device id ${id} on ${path4}`);
+        this.openVendorInputs(path4);
         return;
       }
       console.log("keyboard seen but it did not answer the id query (0x8f); set MONSGEEK_DEVICE_ID to its app device id");
     });
     this.queue = run.catch(() => {
     }).finally(() => this.identifying = false);
+  }
+  // Live messages (key travel for the Simulation Test, profile/light switches made on the keyboard) arrive as
+  // vendor Input reports on another interface of the same keyboard. Forward only those, never normal key reports.
+  vendorIn = [];
+  vendorListeners = /* @__PURE__ */ new Set();
+  onVendor(fn) {
+    this.vendorListeners.add(fn);
+    return () => this.vendorListeners.delete(fn);
+  }
+  openVendorInputs(featurePath) {
+    this.vendorIn.forEach((d) => d.close());
+    this.vendorIn = [];
+    try {
+      const mine = usbDeviceOf(featurePath);
+      const paths = new Set(HID.devices().filter((d) => d.vendorId === this.vid && d.path).map((d) => d.path));
+      for (const p of paths) {
+        if (usbDeviceOf(p) !== mine) continue;
+        const ids = vendorInputReportIds(fs3.readFileSync(`${sysHidraw(p)}/report_descriptor`));
+        if (!ids.size) continue;
+        const dev = new HID.HID(p);
+        dev.on("data", (data) => {
+          if (!ids.has(0) && !ids.has(data[0])) return;
+          const msg = ids.has(0) ? Buffer.concat([Buffer.alloc(1), data]) : data;
+          this.vendorListeners.forEach((fn) => fn(msg));
+        });
+        dev.on("error", () => {
+          dev.close();
+          this.vendorIn = this.vendorIn.filter((d) => d !== dev);
+        });
+        this.vendorIn.push(dev);
+        console.log(`listening for keyboard messages on ${p} (report ${[...ids].join(",")})`);
+      }
+    } catch (error) {
+      console.log(`no live keyboard messages: ${error.message}`);
+    }
   }
   async askId(path4) {
     const device = new HID.HID(path4);
@@ -671,7 +743,7 @@ var TYPES = {
   ".mp4": "video/mp4",
   ".wasm": "application/wasm"
 };
-if (fs3.existsSync(path3.join(uiDir, "index.html"))) {
+if (fs4.existsSync(path3.join(uiDir, "index.html"))) {
   http2.createServer((req, res) => {
     let file;
     try {
@@ -680,8 +752,8 @@ if (fs3.existsSync(path3.join(uiDir, "index.html"))) {
       return void res.writeHead(400).end();
     }
     if (!file.startsWith(uiDir + path3.sep) && file !== uiDir) return void res.writeHead(403).end();
-    if (fs3.existsSync(file) && fs3.statSync(file).isDirectory()) file = path3.join(file, "index.html");
-    fs3.readFile(file, (err, data) => {
+    if (fs4.existsSync(file) && fs4.statSync(file).isDirectory()) file = path3.join(file, "index.html");
+    fs4.readFile(file, (err, data) => {
       if (err) return void res.writeHead(404).end();
       res.writeHead(200, { "content-type": TYPES[path3.extname(file).toLowerCase()] ?? "application/octet-stream", "cache-control": "no-cache" });
       res.end(data);

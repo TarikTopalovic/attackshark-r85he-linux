@@ -301,6 +301,16 @@ export async function createGrpcWebServer(options: GrpcWebServerOptions): Promis
     res.on("close", () => {});
   }
 
+  function handleVenderStream(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const textMode = isGrpcWebText(req.headers["content-type"]);
+    writeHeaders(res, textMode);
+    const off = options.bridge.onVendor?.((msg) => {
+      traceRpc("vender", { head: msg.subarray(0, 8).toString("hex") });
+      if (!res.writableEnded) writeMessage(res, Types.VenderMsg, { msg }, textMode);
+    });
+    res.on("close", () => off?.());
+  }
+
   function handleSystemInfoStream(req: http.IncomingMessage, res: http.ServerResponse): void {
     const textMode = isGrpcWebText(req.headers["content-type"]);
     writeHeaders(res, textMode);
@@ -375,7 +385,7 @@ export async function createGrpcWebServer(options: GrpcWebServerOptions): Promis
     }
 
     if (pathname === "/driver.DriverGrpc/watchVender") {
-      handleEmptyStream(req, res, Types.VenderMsg, null);
+      handleVenderStream(req, res);
       return;
     }
 

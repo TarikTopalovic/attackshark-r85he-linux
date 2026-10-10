@@ -42,6 +42,7 @@ The driver is based on [tricked-dev/monsgeek-js-driver](https://github.com/trick
 - **Unnumbered feature report.** The vendor interface (interface 2, usage page `0xFFFF`) has no report IDs, so hidraw needs a 65-byte read with the leading report-number byte stripped.
 - **Reply latency.** A reply arrives about 16 ms after the command. Until then, reads return the previous reply. The driver now keeps one handle open and waits for the fresh reply. Reopening the device on every call gave zeros.
 - **gRPC-web text mode.** The browser UI sends `grpc-web-text`, and protobuf-ts picks its decoder from the response `Content-Type`. The upstream driver always answered `+proto`, so the UI reported "IOT not detected".
+- **Live keyboard messages.** The Simulation Test's key travel and switches made on the keyboard itself (profile, lighting) arrive as vendor Input reports on a *different* interface (on the R85HE, interface 1 with report id 5; the settings interface has only a Feature report). The driver reads the report ids from the keyboard's HID descriptor, listens there and streams only those reports to the app (`watchVender`), never normal key presses.
 - **Firefox.** The UI calls `navigator.hid` as it starts, and Firefox has no WebHID, so the page stayed blank. `install.sh` adds a small stand-in to `app/dist/index.html`; the real USB work goes through the driver anyway.
 - **Model detection.** The app identifies a keyboard by its device id, and many models share one USB product id. The driver therefore asks the board directly (command `0x8f`, reply bytes 1-2; the R85HE answers 3123). It does this for any keyboard with USB vendor `3151` that has a vendor collection (usage page `0xFF00` or higher), and it detects the report numbering automatically.
 
@@ -53,7 +54,7 @@ Verified on a real R85HE:
 - the UI detects the keyboard and reads the keymap, per-key actuation (2.0 mm default) and lighting;
 - a lighting write lands on the keyboard and reads back correctly.
 
-**Not tested yet:** macros, Fn-layer writes, rapid-trigger writes, the "Simulation Test" live key-travel view and travel calibration.
+**Not tested yet:** macros, Fn-layer writes, rapid-trigger writes and travel calibration.
 
 **Do not use firmware update from this app.** The driver's OTA path has not been validated, and a failed flash can brick the keyboard. Update firmware from Windows with the official tool.
 
