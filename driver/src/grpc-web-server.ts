@@ -51,7 +51,7 @@ export async function createGrpcWebServer(options: GrpcWebServerOptions): Promis
     fs.appendFileSync(rpcTraceFile, `${new Date().toISOString()} ${JSON.stringify({ type, ...payload })}\n`);
   };
 
-  const toHex = (input: Uint8Array | Buffer | undefined, count = 16): string => {
+  const toHex = (input: Uint8Array | Buffer | undefined, count = 64): string => {
     if (!input) return "";
     return Buffer.from(input)
       .subarray(0, count)

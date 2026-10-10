@@ -43,6 +43,8 @@ The driver is based on [tricked-dev/monsgeek-js-driver](https://github.com/trick
 - **Reply latency.** A reply arrives about 16 ms after the command. Until then, reads return the previous reply. The driver now keeps one handle open and waits for the fresh reply. Reopening the device on every call gave zeros.
 - **gRPC-web text mode.** The browser UI sends `grpc-web-text`, and protobuf-ts picks its decoder from the response `Content-Type`. The upstream driver always answered `+proto`, so the UI reported "IOT not detected".
 - **Live keyboard messages.** The Simulation Test's key travel and switches made on the keyboard itself (profile, lighting) arrive as vendor Input reports on a *different* interface (on the R85HE, interface 1 with report id 5; the settings interface has only a Feature report). The driver reads the report ids from the keyboard's HID descriptor, listens there and streams only those reports to the app (`watchVender`), never normal key presses.
+- **Account and community.** The app calls the vendor's servers directly, and they reject browser pages (Origin check, no CORS). `install.sh` points those calls at `/__cloud/<host>/…` on the driver, which forwards them only to the vendor's own hosts and never fetches firmware.
+- **Live updates.** The app pushes pending changes to the keyboard on a 1 s timer; `install.sh` shortens it to 150 ms. With nothing pending it sends nothing.
 - **Firefox.** The UI calls `navigator.hid` as it starts, and Firefox has no WebHID, so the page stayed blank. `install.sh` adds a small stand-in to `app/dist/index.html`; the real USB work goes through the driver anyway.
 - **Model detection.** The app identifies a keyboard by its device id, and many models share one USB product id. The driver therefore asks the board directly (command `0x8f`, reply bytes 1-2; the R85HE answers 3123). It does this for any keyboard with USB vendor `3151` that has a vendor collection (usage page `0xFF00` or higher), and it detects the report numbering automatically.
 
@@ -50,15 +52,34 @@ Set `MONSGEEK_TRACE=1` to log every RPC and HID exchange to `driver/.db/ts-rpc-t
 
 ## Status
 
-Verified on a real R85HE:
-- the UI detects the keyboard and reads the keymap, per-key actuation (2.0 mm default) and lighting;
-- a lighting write lands on the keyboard and reads back correctly.
+Each feature was tested on a real R85HE through the app itself on 2026-10-10. Every test change was written, read back from the keyboard, and then restored; the final state was compared against a full backup (166 settings pages, 4 macro slots, the custom light layer).
 
-**Not tested yet:** macros, Fn-layer writes, rapid-trigger writes and travel calibration.
+| Feature | Status |
+|---|---|
+| Device detection, model id, firmware version | ✅ works |
+| Key remap (Custom Keys), Reset Key | ✅ write and read-back verified |
+| Fn layer remap | ✅ write and read-back verified |
+| Macros: record, save, assign to a key | ✅ macro bytes read back exactly |
+| Magnetic switch: actuation per key, rapid trigger | ✅ write and read-back verified |
+| Advanced keys (tested: Toggle/TGL) | ✅ verified; DKS, MT and SnapKey use the same commands but were not clicked through |
+| Profiles 1-4 | ✅ switch verified |
+| Report rate (Other Settings) | ✅ verified |
+| Lighting: effects, brightness, speed, colour (live picker) | ✅ verified |
+| Side light | ✅ verified |
+| Light Edit (per-key colours, custom layers) | ✅ read and write verified |
+| Simulation Test (live key travel) | ✅ the live data reaches the app; check the on-screen bar yourself |
+| Local Configuration / saved macros | ✅ stored by the driver in `driver/.db` |
+| Community Share, Login | ✅ works through the driver (the vendor servers refuse browser pages directly); logging in with a real account was not tested |
+| Travel Calibration | ⚠️ not run: it needs every key pressed fully, and an aborted run could leave bad calibration. Uses the same command path as the rest |
+| Restore Factory Settings | ⚠️ not run (it would wipe your settings) |
+| Music Follow lighting | ❌ not implemented (needs the PC to stream its sound to the keyboard) |
+| Firmware upgrade | ⛔ blocked on purpose: the driver refuses to fetch firmware. A failed flash can brick the keyboard; update from Windows with the official tool |
 
-**Do not use firmware update from this app.** The driver's OTA path has not been validated, and a failed flash can brick the keyboard. Update firmware from Windows with the official tool.
-
-If an earlier failed session left garbage in the UI (keys shown as disabled), clear the site data for `127.0.0.1:38140` in your browser and reload.
+Good to know:
+- Opening **Light Edit** switches the keyboard to the "User Picture" lighting mode. That's how the app works; pick another effect afterwards if you want.
+- **Reset Key** restores the app's factory values for that key, including its actuation. These can differ from the rest of your keys.
+- Don't click **More → Disable IOT Driver**: the app would then try WebHID, which Firefox doesn't have. To undo it, clear the site data for `127.0.0.1:38140`.
+- If an earlier failed session left garbage in the UI (keys shown as disabled), clear the site data for `127.0.0.1:38140` in your browser and reload.
 
 ## Other models
 

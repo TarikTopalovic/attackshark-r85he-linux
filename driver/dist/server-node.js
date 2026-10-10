@@ -131,7 +131,7 @@ async function createGrpcWebServer(options) {
     fs2.appendFileSync(rpcTraceFile, `${(/* @__PURE__ */ new Date()).toISOString()} ${JSON.stringify({ type, ...payload })}
 `);
   };
-  const toHex = (input, count = 16) => {
+  const toHex = (input, count = 64) => {
     if (!input) return "";
     return Buffer.from(input).subarray(0, count).toString("hex").replace(/(.{2})/g, "$1 ").trim();
   };
@@ -745,6 +745,7 @@ var TYPES = {
 };
 if (fs4.existsSync(path3.join(uiDir, "index.html"))) {
   http2.createServer((req, res) => {
+    if (req.url?.startsWith("/__cloud/")) return void cloud(req, res);
     let file;
     try {
       file = path3.join(uiDir, decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname));
@@ -759,5 +760,32 @@ if (fs4.existsSync(path3.join(uiDir, "index.html"))) {
       res.end(data);
     });
   }).listen(UI_PORT, HOST, () => console.log(`app UI on http://${HOST}:${UI_PORT}/`));
+}
+var CLOUD_HOSTS = /^api\d*\.(rongyuan\.tech|qmk\.top)(:\d+)?$/;
+async function cloud(req, res) {
+  const [host, ...rest] = req.url.slice("/__cloud/".length).split("/");
+  if (!CLOUD_HOSTS.test(host)) return void res.writeHead(403).end();
+  if (/get_fw_version|\/download\/(?!bit_image_file)/.test(req.url)) return void res.writeHead(403).end();
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const headers = {};
+  for (const name of ["content-type", "cookie", "authorization", "accept"]) {
+    const value = req.headers[name];
+    if (typeof value === "string") headers[name] = value;
+  }
+  try {
+    const upstream = await fetch(`https://${host}/${rest.join("/")}`, {
+      method: req.method,
+      headers,
+      body: req.method === "GET" || req.method === "HEAD" ? void 0 : Buffer.concat(chunks),
+      signal: AbortSignal.timeout(3e4)
+    });
+    const out = { "content-type": upstream.headers.get("content-type") ?? "application/octet-stream" };
+    const cookies = upstream.headers.getSetCookie().map((c) => c.replace(/;\s*(domain=[^;]*|secure)/gi, ""));
+    if (cookies.length) out["set-cookie"] = cookies;
+    res.writeHead(upstream.status, out).end(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    res.writeHead(502).end(String(error));
+  }
 }
 //# sourceMappingURL=server-node.js.map
