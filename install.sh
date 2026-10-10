@@ -12,6 +12,8 @@ if [ ! -f app/dist/index.html ]; then
   mkdir -p "$tmp/x" && bsdtar xf "$tmp"/*.exe -C "$tmp/x"
   rm -rf app && mv "$tmp/x/resources/app" app && rm -rf "$tmp"
 fi
+# Firefox has no WebHID and the UI crashes on navigator.hid at start; it talks to the driver anyway, so stub it.
+grep -q 'navigator.hid||' app/dist/index.html || sed -i 's#<head>#<head><script>navigator.hid||Object.defineProperty(navigator,"hid",{value:Object.assign(new EventTarget(),{getDevices:async()=>[],requestDevice:async()=>[]})})</script>#' app/dist/index.html
 
 # 2. The Linux driver that replaces the Windows-only iot_driver.exe.
 (cd driver && npm ci --no-audit --no-fund && npx tsup)
